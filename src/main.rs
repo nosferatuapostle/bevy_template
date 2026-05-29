@@ -34,5 +34,5 @@ fn camera_setup(mut commands: Commands) {
         height: F_GAME_HEIGHT,
     };
 
-    commands.spawn((Camera2d, Projection::Orthographic(proj)));
+    commands.spawn((Camera2d, Projection::Orthographic(projection)));
 }
