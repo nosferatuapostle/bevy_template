@@ -13,14 +13,32 @@ const F_GAME_WIDTH: f32 = 1280.0;
 const F_GAME_HEIGHT: f32 = 720.0;
 
 #[derive(Component)]
-pub struct Dying;
+struct Dying;
+
+#[derive(Component)]
+struct Velocity(Vec2);
+
+#[derive(Component, Default)]
+pub struct MoveTarget {
+    pub position: Vec3,
+    pub active: bool,
+}
+
+#[derive(Component)]
+struct UnitBaseStats {
+    health: f32,
+    max_health: f32,
+    speed: f32
+}
+#[derive(Component)]
+struct Player;
 
 #[derive(Resource)]
-pub struct SpriteAnimationHandle {
-    pub _base_sprite: Sprite,
-    pub _base_animation: Handle<Animation>,
-    pub death_sprite: Sprite,
-    pub death_animation: Handle<Animation>
+struct SpriteAnimationHandle {
+    _base_sprite: Sprite,
+    _base_animation: Handle<Animation>,
+    death_sprite: Sprite,
+    death_animation: Handle<Animation>
 }
 
 // enum UnitFaction {
@@ -50,7 +68,7 @@ fn main() {
         )
         .add_plugins(SpritesheetAnimationPlugin)
         .add_systems(Startup, (camera_setup, load_biomantes_scout_base))
-        .add_systems(Update, (update_system, handle_death_animation))
+        .add_systems(Update, (update_system, handle_death_animation, camera_input_system, player_input_system, player_move_system))
         .run();
 }
 
@@ -62,6 +80,85 @@ fn camera_setup(mut commands: Commands) {
     };
 
     commands.spawn((Camera2d, Projection::Orthographic(projection)));
+}
+
+fn camera_input_system(
+    kb: Res<ButtonInput<KeyCode>>,
+    time: Res<Time>,
+    mut camera: Single<&mut Transform, With<Camera>>,
+) {
+    const SPEED: f32 = 400.0;
+
+    let mut t = camera.into_inner();
+
+    if kb.pressed(KeyCode::KeyW) {
+        t.translation.y += SPEED * time.delta_secs();
+    }
+
+    if kb.pressed(KeyCode::KeyA) {
+        t.translation.x -= SPEED * time.delta_secs();
+    }
+
+    if kb.pressed(KeyCode::KeyS) {
+        t.translation.y -= SPEED * time.delta_secs();
+    }
+
+    if kb.pressed(KeyCode::KeyD) {
+        t.translation.x += SPEED * time.delta_secs();
+    }
+}
+
+fn player_input_system(
+    buttons: Res<ButtonInput<MouseButton>>,
+    window: Single<&Window>,
+    camera: Single<(&Camera, &GlobalTransform)>,
+    mut player: Single<&mut MoveTarget, With<Player>>,
+) {
+    if !buttons.just_pressed(MouseButton::Right) {
+        return;
+    }
+
+    let window = *window;
+    let (camera, camera_transform) = *camera;
+
+    let Some(cursor_pos) = window.cursor_position() else {
+        return;
+    };
+
+    let Ok(world_pos) =
+        camera.viewport_to_world_2d(camera_transform, cursor_pos)
+    else {
+        return;
+    };
+
+    let mut target = player.into_inner();
+
+    target.position = world_pos.extend(0.0);
+    target.active = true;
+}
+
+fn player_move_system(
+    time: Res<Time>,
+    mut player: Single<(&mut Transform, &mut MoveTarget), With<Player>>,
+) {
+    const SPEED: f32 = 200.0;
+
+    let (mut transform, mut target) = player.into_inner();
+
+    if !target.active {
+        return;
+    }
+
+    let dir = target.position - transform.translation;
+    let distance = dir.length();
+
+    if distance < 2.0 {
+        target.active = false;
+        return;
+    }
+
+    transform.translation +=
+        dir.normalize() * SPEED * time.delta_secs();
 }
 
 fn load_biomantes_scout_base(
@@ -120,6 +217,7 @@ fn load_biomantes_scout_base(
         sprite.clone(),
         SpritesheetAnimation::new(base_handle.clone()),
         Transform::from_xyz(0.0, 0.0, 0.0),
+        Player, MoveTarget::default()
     ));
 
     commands.insert_resource(SpriteAnimationHandle {
@@ -133,14 +231,14 @@ fn load_biomantes_scout_base(
 fn update_system(
     mut commands: Commands,
     keyboard: Res<ButtonInput<KeyCode>>,
+    mouse: Res<ButtonInput<MouseButton>>,
     time: Res<Time>,
-    mut query: Query<(Entity, &mut SpritesheetAnimation, &mut Transform), Without<Dying>>,
+    mut query: Query<(Entity, &mut SpritesheetAnimation, &mut MoveTarget), Without<Dying>>,
     animations: Res<SpriteAnimationHandle>
 ) {
-    for (ent, mut anim, mut t) in query.iter_mut() {
-        if keyboard.pressed(KeyCode::KeyA) {
-            t.translation.x += 50.0 * time.delta_secs();
-            t.translation.y += 50.0 * time.delta_secs();
+    for (ent, mut anim, mut m) in query.iter_mut() {
+        if mouse.pressed(MouseButton::Right) {
+            // MoveTarget = MouseWorldPosition
         }
 
         if keyboard.just_pressed(KeyCode::KeyK) {
