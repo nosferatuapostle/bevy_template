@@ -112,7 +112,7 @@ fn player_input_system(
     buttons: Res<ButtonInput<MouseButton>>,
     window: Single<&Window>,
     camera: Single<(&Camera, &GlobalTransform)>,
-    mut player: Single<&mut MoveTarget, With<Player>>,
+    player: Single<&mut MoveTarget, With<Player>>,
 ) {
     if !buttons.just_pressed(MouseButton::Right) {
         return;
@@ -139,7 +139,7 @@ fn player_input_system(
 
 fn player_move_system(
     time: Res<Time>,
-    mut player: Single<(&mut Transform, &mut MoveTarget), With<Player>>,
+    player: Single<(&mut Transform, &mut MoveTarget), With<Player>>,
 ) {
     const SPEED: f32 = 200.0;
 
