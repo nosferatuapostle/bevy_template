@@ -1,7 +1,5 @@
 use bevy::{
-    camera::ScalingMode,
-    prelude::*,
-    window::{EnabledButtons, WindowResolution},
+    camera::ScalingMode, ecs::relationship::Relationship, prelude::*, window::{EnabledButtons, WindowResolution}
 };
 
 use bevy_spritesheet_animation::prelude::*;
@@ -13,39 +11,33 @@ const F_GAME_WIDTH: f32 = 1280.0;
 const F_GAME_HEIGHT: f32 = 720.0;
 
 #[derive(Component)]
-struct Dying;
-
-#[derive(Component)]
-struct Velocity(Vec2);
-
-#[derive(Component, Default)]
-pub struct MoveTarget {
-    pub position: Vec3,
-    pub active: bool,
-}
-
-#[derive(Component)]
-struct UnitBaseStats {
-    health: f32,
-    max_health: f32,
-    speed: f32
-}
-#[derive(Component)]
 struct Player;
 
-#[derive(Resource)]
-struct SpriteAnimationHandle {
-    _base_sprite: Sprite,
-    _base_animation: Handle<Animation>,
-    death_sprite: Sprite,
-    death_animation: Handle<Animation>
+#[derive(Resource, Default)]
+struct CursorCoords {
+    screen: Vec2,
+    world: Vec2
 }
 
-// enum UnitFaction {
-//     IronCorps,
-//     DuskFleet,
-//     Biomantes,
-// }
+#[derive(Component, Default)]
+struct Movement {
+    target: Vec2,
+    velocity: Vec2,
+    is_moving: bool
+}
+
+impl Movement {
+    fn move_to(&mut self, target: Vec2) {
+        self.target = target;
+        self.is_moving = true;
+    }
+
+    fn stop(&mut self) {
+        self.target = Vec2::ZERO;
+        self.velocity = Vec2::ZERO;
+        self.is_moving = false;
+    }
+}
 
 fn main() {
     App::new()
@@ -64,28 +56,54 @@ fn main() {
                     }),
                     ..default()
                 })
-                .set(ImagePlugin::default_nearest()),
+                // .set(ImagePlugin::default_nearest())
         )
         .add_plugins(SpritesheetAnimationPlugin)
-        .add_systems(Startup, (camera_setup, load_biomantes_scout_base))
-        .add_systems(Update, (update_system, handle_death_animation, camera_input_system, player_input_system, player_move_system))
+        .add_systems(Startup, (setup, spawn_player_unit))
+        .add_systems(Update, (update, cursor_moved_system, camera_input_system, player_input_system, movement_system, engine_system))
+        // .add_systems(Update, (update_system, handle_death_animation, camera_input_system, player_input_system, player_move_system))
         .run();
 }
 
-fn camera_setup(mut commands: Commands) {
+fn setup(mut cmds: Commands) {
     let mut projection = OrthographicProjection::default_2d();
     projection.scaling_mode = ScalingMode::Fixed {
         width: F_GAME_WIDTH,
         height: F_GAME_HEIGHT,
     };
 
-    commands.spawn((Camera2d, Projection::Orthographic(projection)));
+    cmds.spawn((Camera2d, Projection::Orthographic(projection)));
+
+    cmds.init_resource::<CursorCoords>();
+}
+
+fn update(
+) {
+    
+}
+
+fn cursor_moved_system(
+    mut events: MessageReader<CursorMoved>,
+    q_camera: Single<(&Camera, &GlobalTransform)>,
+    mut cursor: ResMut<CursorCoords>
+) {
+    let (cam, gt) = *q_camera;
+
+    for event in events.read() {
+        cursor.screen = event.position;
+        // println!("cursor screen coords: {}", cursor.screen);
+
+        if let Ok(world_coords) = cam.viewport_to_world_2d(gt, event.position) {
+            cursor.world = world_coords;
+            // println!("cursor world coords: {}", cursor.world);
+        }
+    }
 }
 
 fn camera_input_system(
     kb: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
-    mut camera: Single<&mut Transform, With<Camera>>,
+    camera: Single<&mut Transform, With<Camera>>,
 ) {
     const SPEED: f32 = 400.0;
 
@@ -109,156 +127,139 @@ fn camera_input_system(
 }
 
 fn player_input_system(
-    buttons: Res<ButtonInput<MouseButton>>,
-    window: Single<&Window>,
-    camera: Single<(&Camera, &GlobalTransform)>,
-    player: Single<&mut MoveTarget, With<Player>>,
+    btns: Res<ButtonInput<MouseButton>>,
+    cursor: Res<CursorCoords>,
+    mut movement: Single<&mut Movement, With<Player>>
 ) {
-    if !buttons.just_pressed(MouseButton::Right) {
-        return;
+    if btns.just_pressed(MouseButton::Right) {
+        movement.move_to(cursor.world);
     }
-
-    let window = *window;
-    let (camera, camera_transform) = *camera;
-
-    let Some(cursor_pos) = window.cursor_position() else {
-        return;
-    };
-
-    let Ok(world_pos) =
-        camera.viewport_to_world_2d(camera_transform, cursor_pos)
-    else {
-        return;
-    };
-
-    let mut target = player.into_inner();
-
-    target.position = world_pos.extend(0.0);
-    target.active = true;
 }
 
-fn player_move_system(
-    time: Res<Time>,
-    player: Single<(&mut Transform, &mut MoveTarget), With<Player>>,
+fn movement_system(
+    mut q_movement: Query<(&mut Transform, &mut Movement)>,
+    time: Res<Time>
 ) {
-    const SPEED: f32 = 200.0;
+    for (mut t, mut m) in q_movement.iter_mut() {
+        if m.target == Vec2::ZERO {
+            continue;
+        }
 
-    let (mut transform, mut target) = player.into_inner();
+        let direction = m.target - t.translation.truncate();
 
-    if !target.active {
-        return;
+        if direction.length() < 2.0 {
+            m.stop();
+            continue;
+        }
+
+        let angle = direction.y.atan2(direction.x);
+        t.rotation = Quat::from_rotation_z(angle - std::f32::consts::FRAC_PI_2);
+
+        let direction = direction.normalize();        
+        m.velocity = direction * 200.0 * time.delta_secs();
+
+        t.translation.x += m.velocity.x;
+        t.translation.y += m.velocity.y;
     }
-
-    let dir = target.position - transform.translation;
-    let distance = dir.length();
-
-    if distance < 2.0 {
-        target.active = false;
-        return;
-    }
-
-    transform.translation +=
-        dir.normalize() * SPEED * time.delta_secs();
 }
 
-fn load_biomantes_scout_base(
-    mut commands: Commands,
+fn create_atlas(
+    x: u32,
+    y: u32,
+    columns: u32,
+    rows: u32
+) -> TextureAtlasLayout {
+    return TextureAtlasLayout::from_grid(UVec2::new(x, y), columns, rows, None, None);
+} 
+
+fn create_animation(
+    img: Handle<Image>,
+    columns: usize,
+    rows: usize,
+    animation_repeat: AnimationRepeat
+) -> Animation {
+    return Spritesheet::new(&img, columns, rows)
+        .create_animation()
+        .add_row(0)
+        .set_repetitions(animation_repeat)
+        .build();
+}
+
+fn create_sprite(
+    img: Handle<Image>,
+    layout: Handle<TextureAtlasLayout>
+) -> Sprite {
+    return Sprite {
+        image: img.into(),
+        texture_atlas: Some(TextureAtlas {
+            layout: layout,
+            index: 0
+        }),
+        color: Color::WHITE,
+        ..default()
+    }
+}
+
+#[derive(Component)]
+struct Unit;
+
+#[derive(Component)]
+struct Engine;
+
+fn spawn_player_unit(
+    mut cmds: Commands,
     assets: Res<AssetServer>,
     mut animations: ResMut<Assets<Animation>>,
-    mut atlas_layouts: ResMut<Assets<TextureAtlasLayout>>,
+    mut layouts: ResMut<Assets<TextureAtlasLayout>>
 ) {
-
-    let base_image = assets.load("unit_biomantes_scout_base.png");
+    let base_img = assets.load("unit_biomantes_scout_base.png");
+    let base_layout = layouts.add(create_atlas(64, 64, 7, 1));
+    let base_animation = animations.add(create_animation(base_img.clone(), 7, 1, AnimationRepeat::Loop));    
     
-    let base_layout = TextureAtlasLayout::from_grid(UVec2::new(64, 64), 7, 1, None, None);
-    let base_layout_handle = atlas_layouts.add(base_layout);
+    let base_sprite = create_sprite(base_img, base_layout);
+    let base_ssanimation = SpritesheetAnimation::new(base_animation);
     
-    let base_animation = Spritesheet::new(&base_image, 7, 1)
-        .create_animation()
-        .add_row(0)
-        .set_duration(AnimationDuration::PerFrame(100))
-        .set_repetitions(AnimationRepeat::Loop)
-        .build();
-    let base_handle = animations.add(base_animation);
-
-    let death_image = assets.load("unit_biomantes_scout_destruction.png");
-    let death_layout = TextureAtlasLayout::from_grid(UVec2::new(64, 64), 9, 1, None, None);
-    let death_layout_handle = atlas_layouts.add(death_layout);
+    let engine_img = assets.load("unit_biomantes_scout_engine.png");
+    let engine_layout = layouts.add(create_atlas(64, 64, 8, 1));
+    let engine_animation = animations.add(create_animation(engine_img.clone(), 8, 1, AnimationRepeat::Loop));
     
-    let death_animation = Spritesheet::new(&death_image, 9, 1)
-        .create_animation()
-        .add_row(0)
-        .set_duration(AnimationDuration::PerFrame(100))
-        .set_repetitions(AnimationRepeat::Times(1))
-        .build();
-    let death_handle = animations.add(death_animation);
-    
-    let sprite = Sprite {
-        image: base_image.into(),
-        texture_atlas: Some(TextureAtlas {
-            layout: base_layout_handle.clone(),
-            index: 0,
-        }),
-        color: Color::WHITE,
-        ..default()
-    };
+    let engine_sprite = create_sprite(engine_img, engine_layout);
+    let engine_ssanimation = SpritesheetAnimation::new(engine_animation);
 
-    let sprite_death = Sprite {
-        image: death_image.into(),
-        texture_atlas: Some(TextureAtlas {
-            layout: death_layout_handle.clone(),
-            index: 0,
-        }),
-        color: Color::WHITE,
-        ..default()
-    };
+    let transform = Transform::from_xyz(0.0, 0.0, 0.0);
 
-    commands.spawn((
-        sprite.clone(),
-        SpritesheetAnimation::new(base_handle.clone()),
-        Transform::from_xyz(0.0, 0.0, 0.0),
-        Player, MoveTarget::default()
-    ));
+    let entt = cmds.spawn((
+        Player,
+        Movement {
+            target: Vec2::ZERO,
+            velocity: Vec2::ZERO,
+            is_moving: false
+        },
+        Unit,
+        transform,
+        base_sprite,
+        base_ssanimation,
+    )).id();
 
-    commands.insert_resource(SpriteAnimationHandle {
-        _base_sprite: sprite,
-        _base_animation: base_handle,
-        death_sprite: sprite_death,
-        death_animation: death_handle,
-    }); 
+    cmds.spawn((
+        engine_sprite,
+        engine_ssanimation,
+        transform,
+        Visibility::Hidden
+    )).set_parent_in_place(entt);
 }
 
-fn update_system(
-    mut commands: Commands,
-    keyboard: Res<ButtonInput<KeyCode>>,
-    mouse: Res<ButtonInput<MouseButton>>,
-    time: Res<Time>,
-    mut query: Query<(Entity, &mut SpritesheetAnimation, &mut MoveTarget), Without<Dying>>,
-    animations: Res<SpriteAnimationHandle>
+fn engine_system(
+    mut q_engine: Query<(&mut Visibility, &ChildOf), With<Engine>>,
+    q_movement: Query<&Movement>,
 ) {
-    for (ent, mut anim, mut m) in query.iter_mut() {
-        if mouse.pressed(MouseButton::Right) {
-            // MoveTarget = MouseWorldPosition
-        }
-
-        if keyboard.just_pressed(KeyCode::KeyK) {
-            commands.entity(ent).insert(animations.death_sprite.clone()).insert(Dying);
-            anim.switch(animations.death_animation.clone());
+    for (mut v, child_of) in q_engine.iter_mut() {
+        if let Ok(m) = q_movement.get(child_of.get()) {
+            *v = if m.is_moving {
+                Visibility::Visible
+            } else {
+                Visibility::Hidden
+            };
         }
     }
 }
-
-fn handle_death_animation(
-    mut commands: Commands,
-    mut messages: MessageReader<AnimationEvent>,
-    query: Query<Entity, With<Dying>>,
-) {
-    for event in messages.read() {
-        if let AnimationEvent::AnimationEnd { entity, .. } = event {
-            if query.contains(*entity) {
-                commands.entity(*entity).despawn();
-            }
-        }
-    }
-}
-
