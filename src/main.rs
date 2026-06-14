@@ -1,5 +1,5 @@
 use bevy::{
-    camera::ScalingMode, ecs::relationship::Relationship, prelude::*, window::{EnabledButtons, WindowResolution}
+    camera::ScalingMode, prelude::*, window::{EnabledButtons, WindowResolution}
 };
 
 use bevy_spritesheet_animation::prelude::*;
@@ -39,6 +39,15 @@ impl Movement {
     }
 }
 
+#[derive(Component)]
+struct Unit;
+
+#[derive(Component)]
+struct Engine(Entity);
+
+#[derive(Component)]
+struct Projectile;
+
 fn main() {
     App::new()
         .add_plugins(
@@ -60,7 +69,14 @@ fn main() {
         )
         .add_plugins(SpritesheetAnimationPlugin)
         .add_systems(Startup, (setup, spawn_player_unit))
-        .add_systems(Update, (update, cursor_moved_system, camera_input_system, player_input_system, movement_system, engine_system))
+        .add_systems(Update, (
+            update,
+            cursor_moved_system,
+            camera_input_system,
+            player_input_system,
+            unit_movement_system,
+            engine_system,
+            projectile_movement_system))
         // .add_systems(Update, (update_system, handle_death_animation, camera_input_system, player_input_system, player_move_system))
         .run();
 }
@@ -127,39 +143,69 @@ fn camera_input_system(
 }
 
 fn player_input_system(
+    mut cmds: Commands,
     btns: Res<ButtonInput<MouseButton>>,
     cursor: Res<CursorCoords>,
-    mut movement: Single<&mut Movement, With<Player>>
+    mut player: Single<(&mut Movement, &mut Transform), With<Player>>
 ) {
     if btns.just_pressed(MouseButton::Right) {
-        movement.move_to(cursor.world);
+        player.0.move_to(cursor.world);
+    }
+
+    if btns.just_pressed(MouseButton::Left) {
+        let transform = player.1.clone();
+        cmds.spawn((
+            Projectile,
+            Movement {
+                target: cursor.world,
+                velocity: Vec2::ZERO,
+                is_moving: false
+            },
+            transform,
+            Sprite::from_color(Color::WHITE, Vec2::new(4.0, 4.0))
+        ));
     }
 }
 
-fn movement_system(
-    mut q_movement: Query<(&mut Transform, &mut Movement)>,
+fn unit_movement_system(
+    mut q_unit_movement: Query<(&mut Transform, &mut Movement), With<Unit>>,
     time: Res<Time>
 ) {
-    for (mut t, mut m) in q_movement.iter_mut() {
-        if m.target == Vec2::ZERO {
+    for (mut transform, mut movement) in q_unit_movement.iter_mut() {
+        if movement.target == Vec2::ZERO {
             continue;
         }
 
-        let direction = m.target - t.translation.truncate();
+        let direction = movement.target - transform.translation.truncate();
 
         if direction.length() < 2.0 {
-            m.stop();
+            movement.stop();
             continue;
         }
 
         let angle = direction.y.atan2(direction.x);
-        t.rotation = Quat::from_rotation_z(angle - std::f32::consts::FRAC_PI_2);
+        transform.rotation = Quat::from_rotation_z(angle - std::f32::consts::FRAC_PI_2);
 
         let direction = direction.normalize();        
-        m.velocity = direction * 200.0 * time.delta_secs();
+        movement.velocity = direction * 200.0 * time.delta_secs();
 
-        t.translation.x += m.velocity.x;
-        t.translation.y += m.velocity.y;
+        transform.translation.x += movement.velocity.x;
+        transform.translation.y += movement.velocity.y;
+    }
+}
+
+fn projectile_movement_system(
+    mut q_projectile_movement: Query<(&mut Transform, &mut Movement), With<Projectile>>,
+    time: Res<Time>
+) {
+    for (mut transform, movement) in q_projectile_movement.iter_mut() {
+        if movement.target == Vec2::ZERO {
+            continue;
+        }
+
+        let direction = (movement.target - transform.translation.truncate()).normalize();
+        transform.translation.x += direction.x * 400.0 * time.delta_secs();
+        transform.translation.y += direction.y * 400.0 * time.delta_secs();
     }
 }
 
@@ -200,12 +246,6 @@ fn create_sprite(
     }
 }
 
-#[derive(Component)]
-struct Unit;
-
-#[derive(Component)]
-struct Engine;
-
 fn spawn_player_unit(
     mut cmds: Commands,
     assets: Res<AssetServer>,
@@ -245,21 +285,26 @@ fn spawn_player_unit(
         engine_sprite,
         engine_ssanimation,
         transform,
+        Engine(entt),
         Visibility::Hidden
     )).set_parent_in_place(entt);
 }
 
 fn engine_system(
-    mut q_engine: Query<(&mut Visibility, &ChildOf), With<Engine>>,
+    mut q_engine: Query<(&mut Visibility, &Engine)>,
     q_movement: Query<&Movement>,
 ) {
-    for (mut v, child_of) in q_engine.iter_mut() {
-        if let Ok(m) = q_movement.get(child_of.get()) {
-            *v = if m.is_moving {
-                Visibility::Visible
-            } else {
-                Visibility::Hidden
-            };
+    for (mut visibility, engine) in q_engine.iter_mut() {
+        let Ok(movement) = q_movement.get(engine.0) else { continue };
+        
+        let new_visibility = if movement.is_moving {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
+        
+        if *visibility != new_visibility {
+            *visibility = new_visibility;
         }
     }
 }
