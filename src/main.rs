@@ -29,6 +29,7 @@ struct ProjectileAssets {
 struct UnitAsset {
     base: AnimationSpriteAsset,
     engine: AnimationSpriteAsset,
+    destruction: AnimationSpriteAsset,
 }
 
 struct AnimationSpriteAsset {
@@ -73,12 +74,21 @@ struct MaxSpeed(f32);
 struct Unit;
 
 #[derive(Component)]
+struct Dying;
+
+#[derive(Component)]
 struct Engine(Entity);
 
 #[derive(Component)]
 struct Projectile {
     direction: Vec2,
     life_time: f32,
+}
+
+#[derive(Message)]
+struct DeathEvent {
+    entity: Entity,
+    killer: Entity,
 }
 
 fn main() {
@@ -99,6 +109,7 @@ fn main() {
             }), // .set(ImagePlugin::default_nearest())
         )
         .add_plugins(SpritesheetAnimationPlugin)
+        .add_message::<DeathEvent>()
         .add_systems(Startup, (setup, spawn_player_unit).chain())
         .add_systems(
             Update,
@@ -112,6 +123,7 @@ fn main() {
                 engine_system,
                 projectile_movement_system,
                 projectile_life_system,
+                destruction_animation_system
             ),
         )
         // .add_systems(Update, (update_system, handle_death_animation, camera_input_system, player_input_system, player_move_system))
@@ -143,12 +155,7 @@ fn setup(
     let corrosion_wave = AnimationSpriteAsset {
         image: assets.load("projectile_wave_corrosion.png"),
         layout: layouts.add(create_atlas(64, 64, 6, 1)),
-        animation: animations.add(create_animation(
-            img.clone(),
-            6,
-            1,
-            AnimationRepeat::Loop,
-        )),
+        animation: animations.add(create_animation(img.clone(), 6, 1, AnimationRepeat::Loop)),
     };
 
     // ----------------
@@ -156,8 +163,8 @@ fn setup(
     // ----------------
 
     let base_img = assets.load("unit_biomantes_scout_base.png");
-
     let engine_img = assets.load("unit_biomantes_scout_engine.png");
+    let destruction_img = assets.load("unit_biomantes_scout_destruction.png");
 
     let biomantes_scout = UnitAsset {
         base: AnimationSpriteAsset {
@@ -169,13 +176,21 @@ fn setup(
             image: engine_img.clone(),
             layout: layouts.add(create_atlas(64, 64, 8, 1)),
             animation: animations.add(create_animation(engine_img, 8, 1, AnimationRepeat::Loop)),
-        }
+        },
+        destruction: AnimationSpriteAsset {
+            image: destruction_img.clone(),
+            layout: layouts.add(create_atlas(64, 64, 9, 1)),
+            animation: animations.add(create_animation(
+                destruction_img,
+                9,
+                1,
+                AnimationRepeat::Times(1),
+            )),
+        },
     };
 
     cmds.insert_resource(GameAssets {
-        units: UnitAssets {
-            biomantes_scout
-        },
+        units: UnitAssets { biomantes_scout },
 
         projectiles: ProjectileAssets { corrosion_wave },
     });
@@ -209,7 +224,27 @@ fn spawn_player_unit(mut cmds: Commands, game_assets: Res<GameAssets>) {
     .set_parent_in_place(entt);
 }
 
-fn update() {}
+fn update(mut death_reader: MessageReader<DeathEvent>) {
+    for event in death_reader.read() {
+        println!("Entity {:?} died", event.entity);
+        println!("Killer is {:?}", event.killer);
+
+        // cmds.entity(event.entity).despawn();
+    }
+}
+
+fn destruction_animation_system(
+    mut cmds: Commands,
+    mut events: MessageReader<AnimationEvent>
+)
+{
+    for event in events.read() {
+
+        if let AnimationEvent::AnimationEnd { entity, .. } = event {
+            cmds.entity(*entity).despawn();
+        }
+    }
+}
 
 fn cursor_moved_system(
     mut events: MessageReader<CursorMoved>,
@@ -260,19 +295,37 @@ fn player_input_system(
     game_assets: Res<GameAssets>,
     btns: Res<ButtonInput<MouseButton>>,
     cursor: Res<CursorCoords>,
-    mut player: Single<(&mut MoveTarget, &mut Transform), With<Player>>,
+    mut player: Single<(Entity, &mut MoveTarget, &mut Transform), (With<Player>, Without<Dying>)>,
+    mut death_writer: MessageWriter<DeathEvent>,
 ) {
     if btns.just_pressed(MouseButton::Right) {
-        player.0.target = Some(cursor.world);
+        player.1.target = Some(cursor.world);
+    }
+
+    if btns.just_pressed(MouseButton::Middle) {
+        let destruction = &game_assets.units.biomantes_scout.destruction;
+
+        cmds.entity(player.0)
+            .remove::<MoveTarget>()
+            .remove::<Velocity>()
+            .insert(destruction.sprite())
+            .insert(destruction.ssanimation())
+            .insert(Dying)
+            .despawn_children();
+
+        death_writer.write(DeathEvent {
+            entity: player.0,
+            killer: player.0,
+        });
     }
 
     if btns.just_pressed(MouseButton::Left) {
         let projectile = &game_assets.projectiles.corrosion_wave;
 
-        let direction = cursor.world - player.1.translation.truncate();
+        let direction = cursor.world - player.2.translation.truncate();
 
         if direction.length_squared() > 0.0001 {
-            let mut transform = Transform::from_translation(player.1.translation);
+            let mut transform = Transform::from_translation(player.2.translation);
             let angle = direction.y.atan2(direction.x);
             transform.rotation = Quat::from_rotation_z(angle - std::f32::consts::FRAC_PI_2);
 
