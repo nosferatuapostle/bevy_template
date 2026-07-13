@@ -138,21 +138,17 @@ fn setup(
     // Projectile
     // ----------------
 
-    let wave_corrosion_img = assets.load("projectile_wave_corrosion.png");
-
-    let wave_corrosion_layout = layouts.add(create_atlas(64, 64, 6, 1));
-
-    let wave_corrosion_animation = animations.add(create_animation(
-        wave_corrosion_img.clone(),
-        6,
-        1,
-        AnimationRepeat::Loop,
-    ));
+    let img = assets.load("projectile_wave_corrosion.png");
 
     let corrosion_wave = AnimationSpriteAsset {
-        image: wave_corrosion_img,
-        layout: wave_corrosion_layout,
-        animation: wave_corrosion_animation,
+        image: assets.load("projectile_wave_corrosion.png"),
+        layout: layouts.add(create_atlas(64, 64, 6, 1)),
+        animation: animations.add(create_animation(
+            img.clone(),
+            6,
+            1,
+            AnimationRepeat::Loop,
+        )),
     };
 
     // ----------------
@@ -163,21 +159,22 @@ fn setup(
 
     let engine_img = assets.load("unit_biomantes_scout_engine.png");
 
-    let base = AnimationSpriteAsset {
-        image: base_img.clone(),
-        layout: layouts.add(create_atlas(64, 64, 7, 1)),
-        animation: animations.add(create_animation(base_img, 7, 1, AnimationRepeat::Loop)),
-    };
-
-    let engine = AnimationSpriteAsset {
-        image: engine_img.clone(),
-        layout: layouts.add(create_atlas(64, 64, 8, 1)),
-        animation: animations.add(create_animation(engine_img, 8, 1, AnimationRepeat::Loop)),
+    let biomantes_scout = UnitAsset {
+        base: AnimationSpriteAsset {
+            image: base_img.clone(),
+            layout: layouts.add(create_atlas(64, 64, 7, 1)),
+            animation: animations.add(create_animation(base_img, 7, 1, AnimationRepeat::Loop)),
+        },
+        engine: AnimationSpriteAsset {
+            image: engine_img.clone(),
+            layout: layouts.add(create_atlas(64, 64, 8, 1)),
+            animation: animations.add(create_animation(engine_img, 8, 1, AnimationRepeat::Loop)),
+        }
     };
 
     cmds.insert_resource(GameAssets {
         units: UnitAssets {
-            biomantes_scout: UnitAsset { base, engine },
+            biomantes_scout
         },
 
         projectiles: ProjectileAssets { corrosion_wave },
@@ -319,18 +316,6 @@ fn unit_movement_system(
 
         let angle = direction.y.atan2(direction.x);
         transform.rotation = Quat::from_rotation_z(angle - std::f32::consts::FRAC_PI_2);
-
-        // if direction.length_squared() < 0.0001 {
-        //     // move_target.stop();
-        //     continue;
-        // }
-
-        // let direction = direction.normalize();
-
-        // let vel = direction * 200.0 * time.delta_secs();
-
-        // transform.translation.x += vel.x;
-        // transform.translation.y += vel.y;
     }
 }
 
