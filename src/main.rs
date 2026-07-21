@@ -79,6 +79,22 @@ struct Dying;
 #[derive(Component)]
 struct Engine(Entity);
 
+#[derive(Resource)]
+struct CameraBounds {
+    half_size: Vec2,
+}
+
+#[derive(Component)]
+struct Enemy;
+
+#[derive(Component)]
+struct EnemyAI {
+    timer: Timer,
+}
+
+#[derive(Resource)]
+struct SpawnTimer(Timer);
+
 #[derive(Component)]
 struct Projectile {
     direction: Vec2,
@@ -120,10 +136,12 @@ fn main() {
                 player_input_system,
                 velocity_system,
                 unit_movement_system,
+                unit_ai_system,
+                unit_spawn_system,
                 engine_system,
                 projectile_movement_system,
                 projectile_life_system,
-                destruction_animation_system
+                destruction_animation_system,
             ),
         )
         // .add_systems(Update, (update_system, handle_death_animation, camera_input_system, player_input_system, player_move_system))
@@ -144,7 +162,13 @@ fn setup(
 
     cmds.spawn((Camera2d, Projection::Orthographic(projection)));
 
+    cmds.insert_resource(CameraBounds {
+        half_size: Vec2::new(F_GAME_WIDTH * 0.5, F_GAME_HEIGHT * 0.5),
+    });
+
     cmds.init_resource::<CursorCoords>();
+
+    cmds.insert_resource(SpawnTimer(Timer::from_seconds(2.0, TimerMode::Repeating)));
 
     // ----------------
     // Projectile
@@ -233,13 +257,8 @@ fn update(mut death_reader: MessageReader<DeathEvent>) {
     }
 }
 
-fn destruction_animation_system(
-    mut cmds: Commands,
-    mut events: MessageReader<AnimationEvent>
-)
-{
+fn destruction_animation_system(mut cmds: Commands, mut events: MessageReader<AnimationEvent>) {
     for event in events.read() {
-
         if let AnimationEvent::AnimationEnd { entity, .. } = event {
             cmds.entity(*entity).despawn();
         }
@@ -370,6 +389,97 @@ fn unit_movement_system(
         let angle = direction.y.atan2(direction.x);
         transform.rotation = Quat::from_rotation_z(angle - std::f32::consts::FRAC_PI_2);
     }
+}
+
+fn unit_ai_system(
+    time: Res<Time>,
+    player: Single<&Transform, (With<Player>, Without<Enemy>)>,
+    mut query: Query<(&mut MoveTarget, &mut EnemyAI), (With<Enemy>, Without<Player>)>,
+) {
+    let player_pos = player.translation.truncate();
+
+    for (mut target, mut ai) in &mut query {
+        ai.timer.tick(time.delta());
+
+        if !ai.timer.just_finished() {
+            continue;
+        }
+
+        let offset = Vec2::new(
+            fastrand::f32() * 500.0 - 250.0,
+            fastrand::f32() * 500.0 - 250.0,
+        );
+
+        target.target = Some(player_pos + offset);
+    }
+}
+
+fn camera_rect(camera: &Transform, bounds: &CameraBounds) -> (f32, f32, f32, f32) {
+    let center = camera.translation.truncate();
+
+    (
+        center.x - bounds.half_size.x,
+        center.x + bounds.half_size.x,
+        center.y - bounds.half_size.y,
+        center.y + bounds.half_size.y,
+    )
+}
+
+fn unit_spawn_system(
+    mut cmds: Commands,
+    time: Res<Time>,
+    mut spawn_timer: ResMut<SpawnTimer>,
+    bounds: Res<CameraBounds>,
+    camera: Single<&Transform, With<Camera>>,
+    game_assets: Res<GameAssets>,
+) {
+    spawn_timer.0.tick(time.delta());
+
+    if !spawn_timer.0.just_finished() {
+        return;
+    }
+
+    let (left, right, bottom, top) = camera_rect(&camera, &bounds);
+
+    let offset = 150.0;
+
+    let position = match fastrand::usize(0..4) {
+        0 => Vec2::new(
+            fastrand::f32() * (right - left) + left,
+            top + offset,
+        ),
+
+        1 => Vec2::new(
+            fastrand::f32() * (right - left) + left,
+            bottom - offset,
+        ),
+
+        2 => Vec2::new(
+            left - offset,
+            fastrand::f32() * (top - bottom) + bottom,
+        ),
+
+        _ => Vec2::new(
+            right + offset,
+            fastrand::f32() * (top - bottom) + bottom,
+        ),
+    };
+
+    let scout = &game_assets.units.biomantes_scout;
+
+    cmds.spawn((
+        Enemy,
+        EnemyAI {
+            timer: Timer::from_seconds(1.0, TimerMode::Repeating),
+        },
+        Unit,
+        MoveTarget::default(),
+        Velocity::default(),
+        MaxSpeed(150.0),
+        Transform::from_translation(position.extend(0.0)),
+        scout.base.sprite(),
+        scout.base.ssanimation(),
+    ));
 }
 
 fn projectile_movement_system(query: Query<(&mut Transform, &mut Projectile)>, time: Res<Time>) {
