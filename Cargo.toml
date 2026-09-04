@@ -7,3 +7,4 @@ edition = "2024"
 bevy = "0.18.1"
 bevy_spritesheet_animation = "6.1.0"
 fastrand = "2"
+bevy_rapier2d = { version = "0.34", features = ["simd-stable"] }
